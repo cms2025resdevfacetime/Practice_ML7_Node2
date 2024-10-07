@@ -8,7 +8,11 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Practice_ML7_Node2.Server.Models;
 using Tensorflow;
+using Tensorflow.Clustering;
 using static Tensorflow.Binding;
+using Accord.MachineLearning;
+using Accord.Math;
+using Accord.Math.Distances;
 
 
 namespace Practice_ML7_Node2.Server.Controllers
@@ -35,6 +39,9 @@ namespace Practice_ML7_Node2.Server.Controllers
         public class PredictionData
         {
             public float PredictionDataUpdate { get; set; }
+            public float AccordCentroid1 { get; set; }
+            public float AccordCentroid2 { get; set; }
+            public float AccordCentroid3 { get; set; }
         }
 
         /// <summary>
@@ -139,6 +146,7 @@ namespace Practice_ML7_Node2.Server.Controllers
                 /// </summary>
                 private readonly int _id;
                 private readonly string _name;
+                private PredictionData _sharedPredictionData;
 
                 /// <summary>
                 /// Part 3 
@@ -149,6 +157,7 @@ namespace Practice_ML7_Node2.Server.Controllers
                 {
                     _id = id;
                     _name = name;
+
                 }
                 /// <summary>
                 /// Part  4
@@ -211,7 +220,7 @@ namespace Practice_ML7_Node2.Server.Controllers
                         ///        }
                         /// 
                         /// </summary>
-                PredictionData predictionData = new PredictionData();
+                        PredictionData predictionData = GetSharedPredictionData();
 
                         /// <summary>
                         ///  tflowpart1 
@@ -711,13 +720,105 @@ namespace Practice_ML7_Node2.Server.Controllers
                 /// </summary>
                 public async Task Stage2(int id, string name, PrimaryDbContext context)
                 {
-                    /// <summary>
-                    /// Part  6
-                    /// Here we will implement the logic within the second stage of the factory 
-                    /// Try: tflowpart1
-                    /// </summary>
-                    await Task.Run(() => System.Diagnostics.Debug.WriteLine($"Stage2: {id}, {name}"));
+                    System.Diagnostics.Debug.WriteLine("Starting Stage2 method");
+
+                    // Retrieve the PredictionData instance from a shared location
+                    // This could be a property of the factory class or passed as a parameter
+                    PredictionData predictionData = GetSharedPredictionData();
+
+                    // Log the PredictionDataUpdate value from Stage 1
+                    System.Diagnostics.Debug.WriteLine($"PredictionDataUpdate from Stage 1: {predictionData.PredictionDataUpdate}");
+
+                    // Fetch products
+                    System.Diagnostics.Debug.WriteLine("Fetching products from database");
+                    var productsByName = await context.Products
+                       .Where(p => p.Name == name)
+                       .ToListAsync();
+
+                    System.Diagnostics.Debug.WriteLine($"Found {productsByName.Count} products with name '{name}'");
+                    foreach (var product in productsByName)
+                    {
+                        System.Diagnostics.Debug.WriteLine($"Name: {product.Name}, Price: {product.Price:F4}");
+                    }
+
+                    // Extract prices and convert to double
+                    System.Diagnostics.Debug.WriteLine("Extracting prices for clustering");
+                    var prices = productsByName.Select(p => new double[] { (double)p.Price }).ToArray();
+
+                    // Define clustering parameters
+                    int numClusters = 3; // Ensure we always have 3 clusters
+                    int numIterations = 100;
+                    System.Diagnostics.Debug.WriteLine($"Clustering parameters: clusters={numClusters}, iterations={numIterations}");
+
+                    // Create k-means algorithm
+                    var kmeans = new Accord.MachineLearning.KMeans(numClusters)
+                    {
+                        MaxIterations = numIterations,
+                        Distance = new SquareEuclidean()
+                    };
+
+                    // Compute the algorithm
+                    System.Diagnostics.Debug.WriteLine("Starting k-means clustering");
+                    var clusters = kmeans.Learn(prices);
+
+                    // Get the cluster centroids
+                    var centroids = clusters.Centroids;
+
+                    System.Diagnostics.Debug.WriteLine("K-means clustering completed");
+
+                    // Get cluster assignments for each point
+                    var assignments = clusters.Decide(prices);
+
+                    // Log final results
+                    System.Diagnostics.Debug.WriteLine("Final clustering results:");
+                    for (int i = 0; i < prices.Length; i++)
+                    {
+                        System.Diagnostics.Debug.WriteLine($"Price: {prices[i][0]:F4}, Cluster: {assignments[i]}");
+                    }
+
+                    System.Diagnostics.Debug.WriteLine("Final centroids:");
+                    for (int i = 0; i < numClusters; i++)
+                    {
+                        System.Diagnostics.Debug.WriteLine($"Centroid {i}: {centroids[i][0]:F4}");
+                    }
+
+                    // Set centroid values to PredictionData object
+                    predictionData.AccordCentroid1 = (float)centroids[0][0];
+                    predictionData.AccordCentroid2 = (float)centroids[1][0];
+                    predictionData.AccordCentroid3 = (float)centroids[2][0];
+
+                    // Calculate a simple metric: average distance to assigned centroid
+                    double totalDistance = 0;
+                    for (int i = 0; i < prices.Length; i++)
+                    {
+                        double distance = Math.Abs(prices[i][0] - centroids[assignments[i]][0]);
+                        totalDistance += distance;
+                    }
+                    double avgDistance = totalDistance / prices.Length;
+
+                    System.Diagnostics.Debug.WriteLine($"Average distance to assigned centroid: {avgDistance:F4}");
+
+                    // Log all PredictionData values
+                    System.Diagnostics.Debug.WriteLine("PredictionData values:");
+                    System.Diagnostics.Debug.WriteLine($"PredictionDataUpdate: {predictionData.PredictionDataUpdate}");
+                    System.Diagnostics.Debug.WriteLine($"AccordCentroid1: {predictionData.AccordCentroid1}");
+                    System.Diagnostics.Debug.WriteLine($"AccordCentroid2: {predictionData.AccordCentroid2}");
+                    System.Diagnostics.Debug.WriteLine($"AccordCentroid3: {predictionData.AccordCentroid3}");
+
+                    System.Diagnostics.Debug.WriteLine("Stage2 method completed");
                 }
+
+                // This method should be added to the ConcreteProductFactory class
+                private PredictionData GetSharedPredictionData()
+                {
+                    // If this doesn't exist yet, create it
+                    if (_sharedPredictionData == null)
+                    {
+                        _sharedPredictionData = new PredictionData();
+                    }
+                    return _sharedPredictionData;
+                }
+
                 /// <summary>
                 /// Part  7
                 /// Define one of the stages of the factory 
@@ -725,12 +826,25 @@ namespace Practice_ML7_Node2.Server.Controllers
                 /// </summary>
                 public async Task Stage3(int id, string name, PrimaryDbContext context)
                 {
-                    /// <summary>
-                    /// Part  8
-                    /// Here we will implement the logic within the second stage of the factory 
-                    /// Try: tflowpart1
-                    /// </summary>
-                    await Task.Run(() => System.Diagnostics.Debug.WriteLine($"Stage3: {id}, {name}"));
+                    System.Diagnostics.Debug.WriteLine("Starting Stage3 method");
+
+                    // Retrieve the shared PredictionData instance
+                    PredictionData predictionData = GetSharedPredictionData();
+
+                    // Output the requested values
+                    System.Diagnostics.Debug.WriteLine("PredictionData values in Stage 3:");
+                    System.Diagnostics.Debug.WriteLine($"PredictionDataUpdate: {predictionData.PredictionDataUpdate}");
+                    System.Diagnostics.Debug.WriteLine($"AccordCentroid1: {predictionData.AccordCentroid1}");
+                    System.Diagnostics.Debug.WriteLine($"AccordCentroid2: {predictionData.AccordCentroid2}");
+                    System.Diagnostics.Debug.WriteLine($"AccordCentroid3: {predictionData.AccordCentroid3}");
+
+                    // Perform any Stage 3 specific operations here
+                    // For now, we'll just output the id and name
+                    await Task.Run(() => System.Diagnostics.Debug.WriteLine($"Stage3 processing for id: {id}, name: {name}"));
+
+                    // You can add more Stage 3 specific logic here
+
+                    System.Diagnostics.Debug.WriteLine("Stage3 method completed");
                 }
                 /// <summary>
                 /// Part  9
@@ -738,7 +852,7 @@ namespace Practice_ML7_Node2.Server.Controllers
                 /// upon what we get back from the stages
                 /// </summary>
                 // Keeping this method as it might be used elsewhere
-               
+
             }///End ConcreteProductFactory : IProductFactory
 
 
